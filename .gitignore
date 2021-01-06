@@ -1,4 +1,5 @@
 .vscode/settings.json
+.idea/
 vars.txt
 sts.txt
 op_bdmep_api.txt
