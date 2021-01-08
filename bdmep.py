@@ -48,7 +48,7 @@ class BDmep:
             raise ValueError(f"Invalid frequency type. Expected one of: {BDmep.frequencies}")
         if st.lower() not in BDmep.st_types:
             raise ValueError(f"Invalid station type. Expected one of: {BDmep.st_types}")
-        if region.lower() not in BDmep.regions and region is not None:
+        if region is not None and region.lower() not in BDmep.regions:
             raise ValueError(f"Invalid region. Expected one of: {BDmep.regions}")
 
         self.freq = freq
