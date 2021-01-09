@@ -21,17 +21,17 @@ class BDmep:
     #: Base URL for retrieving station information and for requesting data from the API.
     base_apibdmep = "https://apibdmep.inmet.gov.br/"
 
-    def __init__(self, freq, st="automatic", region=None, attrs=None, sts=None):
+    def __init__(self, freq, st_type="automatic", region=None, attrs=None, sts=None):
         """
 
         :param freq: String specifying the frequency for querying attribute information and
             requesting data from the API. Can be hourly, daily and monthly ('h', 'd', 'm').
-        :param st: String specifying station type for querying attribute information and requesting
-            data from the API. Can be 'automatic' or 'conventional'.
+        :param st_type: String specifying station type for querying attribute information and
+            requesting data from the API. Can be 'automatic' or 'conventional'.
         :param region: Either a string or None, in which case all regions are used. It specifies a
             region for querying station information. Can be north, northeast, south, southeast,
             midwest ('n', 'no', 's', 'su', 'co').
-        :param attrs: Either a list or None, in which case all attributes are used. The attributes
+        :param attrs: A list, None or 'all', in which case all attributes are used. The attributes
             must be in code format (i.e. I103), an alias (depends on the frequency and is
             only supported for automatic stations, see below), or by exact description.
             Valid aliases for hourly frequency: 'rain', 'P_mean', 'P_max', 'P_min', 'T_mean',
@@ -39,31 +39,38 @@ class BDmep:
             Daily frequency: 'rain', 'P_mean', 'T_mean', 'T_max', 'T_min', 'RH_mean',
             'RH_min', 'U_mean', 'U_max'.
             Monthly frequency: 'days_raining', 'rain', 'P_mean', 'T_mean', 'U_mean', 'U_max'.
-        :param sts: Either a list or 'all', in which case all stations are used. It specifies the
+        :param sts: A list, None or 'all', in which case all stations are used. It specifies the
             stations in code format (i.e. A713), or in a city state format (i.e. Sorocaba SP,
             Sao José do Rio Preto-SP, CoximMS).
-        :raises ValueError: If freq, st or region params are not valid.
+        :raises ValueError: If freq, st_type or region params are not valid.
         """
+        if sts is None:
+            sts = []
+        if attrs is None:
+            attrs = []
         if freq.lower() not in BDmep.frequencies:
             raise ValueError(f"Invalid frequency type. Expected one of: {BDmep.frequencies}")
-        if st.lower() not in BDmep.st_types:
+        if st_type.lower() not in BDmep.st_types:
             raise ValueError(f"Invalid station type. Expected one of: {BDmep.st_types}")
         if region is not None and region.lower() not in BDmep.regions:
             raise ValueError(f"Invalid region. Expected one of: {BDmep.regions}")
 
         self.freq = freq
-        self.st = st
+        self.st_type = st_type
         self.region = region
+        #: Dictionary of aliases.
+        self._aliases = self._attr_aliases() if self.st_type == "automatic" else None
+        #: Raw response from the API.
+        self.attr_response = self.query_attrs()
+        self.st_response = self.query_sts()
         #: List of attribute codes from the attrs param.
         self.attributes = self.__attr_codes(attrs)
-        #: Dictionary of aliases.
-        self.__aliases = self._attr_aliases() if self.st == "automatic" else None
         #: List of station codes from the sts param.
         self.stations = self.__st_codes(sts)
 
     def __repr__(self):
         return (
-            f"BDmep(freq={self.freq}, st={self.st}, region={self.region}, attrs="
+            f"BDmep(freq={self.freq}, st_type={self.st_type}, region={self.region}, attrs="
             f"{self.attributes}, sts={self.stations})"
         )
 
@@ -79,7 +86,7 @@ class BDmep:
         :return: Dictionary of aliases for common attributes.
         :rtype: dict
         """
-        if self.freq.lower() == "h" and self.st == "automatic":
+        if self.freq.lower() == "h" and self.st_type == "automatic":
             return {
                 "rain": "I175",
                 "P_mean": "I106",
@@ -95,7 +102,7 @@ class BDmep:
                 "U_mean": "I111",
                 "U_max": "I608",
             }
-        elif self.freq.lower() == "d" and self.st == "automatic":
+        elif self.freq.lower() == "d" and self.st_type == "automatic":
             return {
                 "rain": "I006",
                 "P_mean": "I109",
@@ -107,7 +114,7 @@ class BDmep:
                 "U_mean": "I009",
                 "U_max": "I621",
             }
-        elif self.freq.lower() == "m" and self.st == "automatic":
+        elif self.freq.lower() == "m" and self.st_type == "automatic":
             return {
                 "days_raining": "I230",
                 "rain": "I209",
@@ -117,7 +124,7 @@ class BDmep:
                 "U_max": "I221",
             }
 
-    def available_attrs(self):
+    def query_attrs(self):
         """Queries the attributes according to frequency and station from the API.
 
         :return: A list of dictionaries containing the attributes.
@@ -125,35 +132,35 @@ class BDmep:
         """
         freq_frag = self.freq.upper()
         # TODO: Config file?
-        st_frag = "A301".strip("/") if self.st == "automatic" else "83377".strip("/")
+        st_frag = "A301" if self.st_type == "automatic" else "83377"
         path = posixpath.join(st_frag.strip("/"), freq_frag)
         url = urljoin(BDmep.base_apitempo, path)
-        print(f"DEBUG: Making GET request on {url}")
+        print(f"DEBUG: GET request: {url}")
         return requests.get(url).json()
 
-    def available_sts(self):
+    def query_sts(self):
         """Queries the stations according to station type and region from the API.
 
         :return: A list of dictionaries containing the stations.
         :rtype: list[dict]
         """
-        st_frag = "T/R" if self.st == "automatic" else "M/R"
+        st_frag = "T/R" if self.st_type == "automatic" else "M/R"
         if self.region is None:
-            sts = []
+            response = []
             for region in BDmep.regions:
                 region_frag = region.upper()
                 path = posixpath.join(st_frag, region_frag)
-                print(f"DEBUG: Making GET request on {urljoin(BDmep.base_apibdmep, path)}")
-                sts.extend(requests.get(urljoin(BDmep.base_apibdmep, path)).json())
-            return sts
+                print(f"DEBUG: GET request: {urljoin(BDmep.base_apibdmep, path)}")
+                response.extend(requests.get(urljoin(BDmep.base_apibdmep, path)).json())
+            return response
         else:
             region_frag = self.region.upper()
             path = posixpath.join(st_frag, region_frag)
-            print(f"DEBUG: Making GET request on {urljoin(BDmep.base_apibdmep, path)}")
+            print(f"DEBUG: GET request: {urljoin(BDmep.base_apibdmep, path)}")
             return requests.get(urljoin(BDmep.base_apibdmep, path)).json()
 
     def __attr_codes(self, attrs_selector):
-        """Attribute codes from alias, code (i.e. I109) or exact description. If attrs is None,
+        """Attribute codes from alias, code (i.e. I109) or exact description. If attrs is 'all',
         all attribute codes available are returned.
 
         Valid aliases for hourly frequency: 'rain', 'P_mean', 'P_max', 'P_min', 'T_mean',
@@ -162,75 +169,120 @@ class BDmep:
         'RH_min', 'U_mean', 'U_max'.
         Monthly frequency: 'days_raining', 'rain', 'P_mean', 'T_mean', 'U_mean', 'U_max'.
 
-        :param attrs_selector: Either a list or 'all' (to be implemented), in which case all
-            attribute codes are returned. Must be in code format (i.e. I103), an alias (depends on
-            the frequency and is only supported for automatic stations, see below), or by exact
-            description.
-        :raises NotImplementedError: If alias is used when self.st == 'conventional'.
-        :raises ValueError: If no valid attribute selector is specified.
-        :return: A list of strings containing the attribute codes.
+        :param attrs_selector: Either a list or 'all', in which case all attribute codes are
+            returned. Must be in code format (i.e. I103), an alias (depends on the frequency and
+            is only supported for automatic stations, see above), or by exact description. When
+            given an empty list an empty list is returned.
+        :raises ValueError: If no valid attribute selector is is given: it is either None or it
+            doesn't match any actual attribute from the API.
+        :return: A list of strings containing the attribute codes or an empty list.
         :rtype: list[str]
         """
-        if attrs_selector is None:
-            return [entry["CODIGO"] for entry in self.available_attrs()]
+        if not attrs_selector:
+            return []
+        elif attrs_selector == "all":
+            return [entry["CODIGO"] for entry in self.attr_response]
 
         codes = []
-        for attr in attrs_selector:
-            if attr in self.__aliases and self.st == "automatic":
-                codes.append(self.__aliases[attr])
-            elif attr in self.__aliases and self.st == "conventional":
-                raise NotImplementedError(
-                    "Attribute aliases currently only work for automatic stations."
-                )
-            elif re.match(r"I\d{3}", attr, flags=re.I):
-                # Treat as attr code
-                codes.append(attr.upper())
+        for selector in attrs_selector:
+            if selector in self._aliases:
+                codes.append(self._aliases[selector])
+            elif re.match(r"I\d{3}", selector, flags=re.I):
+                try:
+                    next(
+                        codes.append(entry["CODIGO"])
+                        for entry in self.attr_response
+                        if entry["CODIGO"] == selector.upper()
+                    )
+                except StopIteration as e:
+                    raise ValueError(
+                        f"Parameter '{selector}' given doesn't correspond to any attribute."
+                    ) from e
             else:
                 # Treat as description
-                for entry in self.available_attrs():
-                    if entry["DESCRICAO"] == attr:
+                try:
+                    next(
                         codes.append(entry["CODIGO"])
-                    else:
-                        raise Exception("Invalid description.")
+                        for entry in self.attr_response
+                        if entry["DESCRICAO"].lower() == selector.lower()
+                    )
+                except StopIteration as e:
+                    raise ValueError(
+                        f"Parameter '{selector}' given doesn't correspond to any attribute."
+                    ) from e
         return codes
 
     def __st_codes(self, sts_selector):
         """Station codes from city state format (i.e. Sorocaba SP) or code (i.e. A713). If
-        sts_selector is None, all station codes available for a given region are returned.
+        sts_selector is 'all', all station codes available for a given region are returned.
 
-        :param sts_selector: Either a list or 'all' (to be implemented), in which case all
-            stations are used. It specifies the stations in code format (i.e. A713), or in a city
-            state format (i.e. Sorocaba SP, Sao José do Rio Preto-SP, CoximMS).
-        :raises ValueError: If no valid station selector is specified.
+        :param sts_selector: Either a list or 'all', in which case all stations are used. It
+            specifies the stations in code format (i.e. A713), or in a city state format (i.e.
+            Sorocaba SP, Sao José do Rio Preto-SP, CoximMS). When given an empty list, an empty
+            list is returned.
+        :raises ValueError: If no valid station selector is given: it is either None or it
+            doesn't match any actual station from the API.
         :return: A list of strings containing the station codes.
         :rtype: list[str]
         """
-        stations = self.available_sts()
-        if sts_selector is None:
-            return [entry["CD_ESTACAO"] for entry in stations]
-        else:
-            codes = []
-            for selector in sts_selector:
-                selector = unidecode(selector)
-                if match := re.match(r"^([ a-z]+)[^a-z]?([A-Z]{2})$", selector, flags=re.I):
-                    for entry in stations:
-                        if (
-                            entry["SG_ESTADO"] == match.group(2).upper()
-                            and entry["DC_NOME"] == match.group(1).upper()
-                        ):
-                            codes.append(entry["CD_ESTACAO"])
-                elif re.match(r"[A-Z]\d{3}", selector, flags=re.I):
-                    codes.append(selector.upper())
-                else:
-                    raise ValueError(
-                        "Invalid stations. Expected a string formatted as such: city followed by "
-                        "the state double char code (i.e. Sorocaba SP, Sao José do Rio Preto-SP, "
-                        "CoximMS); or a station code (i.e. A713)."
+
+        if not sts_selector:
+            return []
+        elif sts_selector == "all":
+            return [entry["CD_ESTACAO"] for entry in self.st_response]
+
+        codes = []
+        for selector in sts_selector:
+            selector = unidecode(selector)
+            if match := re.match(r"^([ a-z]+)[^a-z]?([A-Z]{2})$", selector, flags=re.I):
+                try:
+                    next(
+                        codes.append(entry["CD_ESTACAO"])
+                        for entry in self.st_response
+                        if entry["SG_ESTADO"] == match.group(2).upper().strip()
+                        and entry["DC_NOME"] == match.group(1).upper().strip()
                     )
+                except StopIteration as e:
+                    raise ValueError(
+                        f"Parameter '{selector}' given doesn't correspond to any station."
+                    ) from e
+            elif re.match(r"[A-Z]\d{3}", selector, flags=re.I):
+                try:
+                    next(
+                        codes.append(entry["CD_ESTACAO"])
+                        for entry in self.st_response
+                        if entry["CD_ESTACAO"] == selector.upper()
+                    )
+                except StopIteration as e:
+                    raise ValueError(
+                        f"Parameter '{selector}' given doesn't correspond to any station."
+                    ) from e
+            else:
+                raise ValueError(
+                    "Invalid stations. Expected a string formatted as such: city followed by "
+                    "the state double char code (i.e. Sorocaba SP, Sao José do Rio Preto-SP, "
+                    "CoximMS); or a station code (i.e. A713)."
+                )
         return codes
 
+    # def set_attr(self, attrs_selector):
+    #     self.attributes = self.__attr_codes(attrs_selector)
 
+
+def st_codes(st_type="automatic", region=None, st="all"):
+    """Station codes from parameters."""
+    api = BDmep(freq="h", st_type=st_type, region=region, attrs=None, sts=st)
+    return api.stations
+
+
+def attr_codes(freq, st_type="automatic", attr="all"):
+    """Attribute codes from parameters."""
+    api = BDmep(freq=freq, st_type=st_type, region=None, attrs=attr, sts=None)
+    return api.attributes
+
+
+# TODO: Change BDmep.attributes() and BDmep.__st_codes() to return a dict {name: code}
+# TODO: Add instance attributes for json response.
+# TODO: Rename class parameters to match st_codes() and attr_codes()
 # TODO: Config file?
-# TODO: Change station methods behaviour and add 'all' option.
-# TODO: Change attribute methods behaviour and add 'all' option.
 # TODO: Implement payload preparation and API requesting.
